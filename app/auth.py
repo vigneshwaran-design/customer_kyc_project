@@ -1,42 +1,62 @@
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from passlib.context import CryptContext
+from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 import jwt
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token")
+from app.models import User
+from app.database import get_db
 
-SECRET_KEY = "CHANGE_ME"
+# JWT
+SECRET_KEY = "customer_kyc_#2025#%"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 120
 
-# Demo credentials
-fake_users = {
-    "admin": {"username": "admin", "password": "secret"}
-}
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
-def create_access_token(data: dict, expires_delta=None):
-    encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=15))
-    encode.update({"exp": expire})
-    return jwt.encode(encode, SECRET_KEY, algorithm=ALGORITHM)
+# Password Hashing
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-def login_user(form: OAuth2PasswordRequestForm = Depends()):
-    user = fake_users.get(form.username)
-    if not user or user["password"] != form.password:
-        raise HTTPException(status_code=401, detail="Invalid login")
 
-    access_token = create_access_token({"sub": user["username"]})
-    return {"access_token": access_token, "token_type": "bearer"}
+def hash_password(password: str):
+    return pwd_context.hash(password)
 
-def get_current_user(token: str = Depends(oauth2_scheme)):
+
+def verify_password(raw_password, hashed_password):
+    return pwd_context.verify(raw_password, hashed_password)
+
+
+def create_access_token(data: dict):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+
+# ---------------- LOGIN ----------------
+def login_user(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.username == form.username).first()
+
+    if not user or not verify_password(form.password, user.password):
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    token = create_access_token({"sub": user.username})
+
+    return {"access_token": token, "token_type": "bearer"}
+
+
+# ---------------- VERIFY TOKEN ----------------
+def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     try:
-        data = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username = data.get("sub")
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        user = db.query(User).filter(User.username == username).first()
 
-        if username not in fake_users:
+        if not user:
             raise HTTPException(status_code=401, detail="Invalid token")
 
-        return username
+        return user
 
     except Exception:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
+        raise HTTPException(status_code=401, detail="Token expired or invalid")

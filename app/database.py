@@ -1,9 +1,10 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 import os
+from dotenv import load_dotenv
 
-# Example Render DB URL (replace with yours)
-# postgresql://<user>:<password>@<host>:5432/<database>
+# Load .env file
+load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
