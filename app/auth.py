@@ -1,9 +1,10 @@
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 import jwt
+import hashlib
+import bcrypt
 
 from app.models import User
 from app.database import get_db
@@ -15,18 +16,21 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 120
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
-# Password Hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# ---------------- PASSWORD HASHING (No 72-byte limit) ----------------
+def hash_password(password: str) -> str:
+    """Hash any-length password: SHA256 → bcrypt"""
+    sha256_hash = hashlib.sha256(password.encode()).digest()
+    hashed = bcrypt.hashpw(sha256_hash, bcrypt.gensalt())
+    return hashed.decode()
 
 
-def hash_password(password: str):
-    return pwd_context.hash(password)
+def verify_password(raw_password: str, hashed_password: str) -> bool:
+    sha256_hash = hashlib.sha256(raw_password.encode()).digest()
+    return bcrypt.checkpw(sha256_hash, hashed_password.encode())
 
 
-def verify_password(raw_password, hashed_password):
-    return pwd_context.verify(raw_password, hashed_password)
-
-
+# ---------------- CREATE JWT TOKEN ----------------
 def create_access_token(data: dict):
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -35,7 +39,10 @@ def create_access_token(data: dict):
 
 
 # ---------------- LOGIN ----------------
-def login_user(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+def login_user(
+    form: OAuth2PasswordRequestForm = Depends(),
+    db: Session = Depends(get_db)
+):
     user = db.query(User).filter(User.username == form.username).first()
 
     if not user or not verify_password(form.password, user.password):
@@ -47,7 +54,10 @@ def login_user(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 
 
 # ---------------- VERIFY TOKEN ----------------
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db)
+):
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username: str = payload.get("sub")
